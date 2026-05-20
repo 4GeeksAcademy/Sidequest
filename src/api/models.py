@@ -1,22 +1,22 @@
-
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import String, Boolean, ForeignKey, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from werkzeug.security import generate_password_hash, check_password_hash
 import enum
- 
+
 db = SQLAlchemy()
- 
- 
+
+
 class User(db.Model):
     """User model with friend request and friendship relationships."""
- 
+
     __tablename__ = 'user'
- 
+
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean(), nullable=False)
- 
+
     # Relationships for friend requests
     sent_requests: Mapped[list['FriendRequest']] = relationship(
         'FriendRequest',
@@ -30,65 +30,67 @@ class User(db.Model):
         backref='receiver',
         cascade='all, delete-orphan'
     )
- 
+
+    # --- NUEVOS MÉTODOS DE SEGURIDAD PARA CONTRASEÑAS ---
+    def set_password(self, password):
+        """Hashea la contraseña antes de guardarla."""
+        self.password = generate_password_hash(password)
+
+    def check_password(self, password):
+        """Verifica si la contraseña ingresada coincide con el hash."""
+        return check_password_hash(self.password, password)
+    # ----------------------------------------------------
+
     def serialize(self):
         return {
             "id": self.id,
             "email": self.email,
             # do not serialize the password, its a security breach
         }
- 
+
     def get_friends(self):
         """Get list of accepted friends (both directions)."""
         accepted_requests = FriendRequest.query.filter(
             ((FriendRequest.sender_id == self.id) | (FriendRequest.receiver_id == self.id)),
             FriendRequest.status == FriendRequestStatus.ACCEPTED
         ).all()
- 
+
         friends = []
         for request in accepted_requests:
             if request.sender_id == self.id:
                 friends.append(request.receiver)
             else:
                 friends.append(request.sender)
- 
+
         return friends
- 
+
     def get_pending_received_requests(self):
         """Get pending friend requests received by this user."""
         return FriendRequest.query.filter(
             FriendRequest.receiver_id == self.id,
             FriendRequest.status == FriendRequestStatus.PENDING
         ).all()
- 
+
     def get_pending_sent_requests(self):
         """Get pending friend requests sent by this user."""
         return FriendRequest.query.filter(
             FriendRequest.sender_id == self.id,
             FriendRequest.status == FriendRequestStatus.PENDING
         ).all()
- 
- 
+
+
 class FriendRequestStatus(enum.Enum):
     """Enum for friend request status."""
     PENDING = 'pending'
     ACCEPTED = 'accepted'
     REJECTED = 'rejected'
- 
- 
+
+
 class FriendRequest(db.Model):
-    """
-    Model to handle friend requests between users.
- 
-    Supports:
-    - HU-04: Send friend request (via QR code scan - use user ID)
-    - HU-05: Accept friend request
-    - HU-06: Reject friend request
-    - HU-07: View friends list (via User.get_friends())
-    """
- 
+    
+
     __tablename__ = 'friend_request'
- 
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sender_id: Mapped[int] = mapped_column(ForeignKey('user.id'), nullable=False)
     receiver_id: Mapped[int] = mapped_column(ForeignKey('user.id'), nullable=False)
@@ -97,7 +99,7 @@ class FriendRequest(db.Model):
         default=FriendRequestStatus.PENDING,
         nullable=False
     )
- 
+
     def serialize(self):
         return {
             "id": self.id,
@@ -107,12 +109,12 @@ class FriendRequest(db.Model):
             "receiver_email": self.receiver.email if self.receiver else None,
             "status": self.status.value
         }
- 
+
     def accept(self):
         """Accept the friend request."""
         self.status = FriendRequestStatus.ACCEPTED
         db.session.commit()
- 
+
     def reject(self):
         """Reject the friend request."""
         self.status = FriendRequestStatus.REJECTED
